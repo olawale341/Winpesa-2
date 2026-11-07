@@ -7,8 +7,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -21,7 +19,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
-import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,7 +27,6 @@ import androidx.appcompat.app.AppCompatActivity
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var targetDot: ImageView
     private lateinit var tvStatus: TextView
     private lateinit var tvAccountInfo: TextView
     private lateinit var btnAutoRun: Button
@@ -69,10 +65,8 @@ class MainActivity : AppCompatActivity() {
         btnStep3 = findViewById(R.id.btnStep3)
         btnStep4 = findViewById(R.id.btnStep4)
         webView = findViewById(R.id.webView)
-        targetDot = findViewById(R.id.targetDot)
 
         setupWebView()
-        setupDraggableTargetDot()
         loadPersistedData()
 
         btnAutoRun.setOnClickListener { toggleAutoRun() }
@@ -83,38 +77,6 @@ class MainActivity : AppCompatActivity() {
         btnStep4.setOnClickListener { runStep4_LogoutAndNext() }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setupDraggableTargetDot() {
-        var dX = 0f
-        var dY = 0f
-        targetDot.setOnTouchListener { view, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    dX = view.x - event.rawX
-                    dY = view.y - event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    view.animate().x(event.rawX + dX).y(event.rawY + dY).setDuration(0).start()
-                    true
-                }
-                else -> false
-            }
-        }
-    }
-
-    private fun tapAtTargetDot() {
-        val tapX = targetDot.x + (targetDot.width / 2f)
-        val tapY = targetDot.y + (targetDot.height / 2f)
-        val now = SystemClock.uptimeMillis()
-        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, tapX, tapY, 0)
-        val up = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, tapX, tapY, 0)
-        webView.dispatchTouchEvent(down)
-        webView.dispatchTouchEvent(up)
-        down.recycle()
-        up.recycle()
-    }
-
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         val s = webView.settings
@@ -123,7 +85,7 @@ class MainActivity : AppCompatActivity() {
         s.databaseEnabled = true
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
-        s.cacheMode = WebSettings.LOAD_DEFAULT
+        s.cacheMode = WebSettings.LOAD_DEFAULT // Retains web assets for 5x speed
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.userAgentString = s.userAgentString.replace("; wv", "")
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -137,8 +99,8 @@ class MainActivity : AppCompatActivity() {
                 if (url != null && url.contains("winpesa.ng")) {
                     detectDynamicMaharaLink()
                     if (isAutoRunning && !isStepActive && url.trimEnd('/') == "https://winpesa.ng") {
-                        tvStatus.text = "Home Ready: Starting Account #${currentIndex + 1}..."
-                        safeDelay(3000) { runStep1_Login() }
+                        tvStatus.text = "Account #${currentIndex + 1}..."
+                        safeDelay(800) { runStep1_Login() }
                     }
                 }
             }
@@ -146,8 +108,7 @@ class MainActivity : AppCompatActivity() {
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true) {
-                    tvStatus.text = "Network dip, retrying in 3s..."
-                    safeDelay(3000) { view?.reload() }
+                    safeDelay(1500) { view?.reload() }
                 }
             }
         }
@@ -160,14 +121,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dismissBanners() {
-        val js = """
-            (function() {
-                Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
-                    let t = (e.innerText||'').trim().toLowerCase();
-                    if (t === 'got it' || t === 'accept' || t === '×' || t === 'x') e.click();
-                });
-            })();
-        """.trimIndent()
+        val js = "(function(){ Array.from(document.querySelectorAll('button,div,span,a')).forEach(e=>{ let t=(e.innerText||'').trim().toLowerCase(); if(t==='got it'||t==='accept'||t==='×'||t==='x') e.click(); }); })()"
         webView.evaluateJavascript(js, null)
     }
 
@@ -188,7 +142,7 @@ class MainActivity : AppCompatActivity() {
             isStepActive = false
             btnAutoRun.text = "⏸️ PAUSE"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_red_dark)
-            tvStatus.text = "▶️ Auto-Run: Starting Acc #${currentIndex + 1}..."
+            tvStatus.text = "▶️ Auto-Run (5x): Starting Acc #${currentIndex + 1}..."
             runStep1_Login()
         }
     }
@@ -277,7 +231,7 @@ class MainActivity : AppCompatActivity() {
     private fun showPasteDialog(type: String) {
         val input = EditText(this)
         input.setLines(8)
-        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste patterns (one per line, e.g. HDAHHDAHDAHDA)"
+        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste patterns (one per line)"
         AlertDialog.Builder(this)
             .setTitle(if (type == "NUMBERS") "Paste Numbers" else "Paste Patterns")
             .setView(input)
@@ -324,7 +278,7 @@ class MainActivity : AppCompatActivity() {
         input.setText(commonPassword)
         AlertDialog.Builder(this)
             .setTitle("🔑 Common Password")
-            .setMessage("Set the password used across all phone numbers:")
+            .setMessage("Set password for all accounts:")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
                 commonPassword = input.text.toString().trim()
@@ -367,7 +321,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN
+    // 1. LOGIN (Fast 400ms Submission)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -388,12 +342,7 @@ class MainActivity : AppCompatActivity() {
                     let trk = input._valueTracker; if (trk) trk.setValue(old);
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                     input.dispatchEvent(new Event('change', { bubbles: true }));
-                    input.dispatchEvent(new Event('blur', { bubbles: true }));
                 }
-
-                Array.from(document.querySelectorAll('button, div, span, svg, i')).forEach(e => {
-                    let t = (e.innerText||'').trim(); if (t === '×' || t === 'X') e.click();
-                });
 
                 let isLogged = Array.from(document.querySelectorAll('button, a, div')).some(e => (e.innerText||'').trim() === 'DEPOSIT');
                 if (isLogged) return "ALREADY_LOGGED";
@@ -402,21 +351,14 @@ class MainActivity : AppCompatActivity() {
                 let pass = document.querySelector('input[placeholder*="Password"], input[type="password"]');
 
                 if (p && pass) {
-                    setReact(p, '$phone');
-                    setReact(pass, '$commonPassword');
+                    setReact(p, '$phone'); setReact(pass, '$commonPassword');
                     setTimeout(() => {
-                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => {
-                            let t = (b.innerText||'').trim();
-                            return t === 'LOGIN' && b.offsetWidth > 150;
-                        });
+                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 80);
                         if (btn && p.value.length >= 10) btn.click();
-                    }, 1200);
+                    }, 400);
                     return "SUBMITTED";
                 } else {
-                    let h = Array.from(document.querySelectorAll('button, a, div')).find(e => {
-                        let t = (e.innerText||'').trim();
-                        return t === 'LOGIN' && e.offsetWidth < 120;
-                    });
+                    let h = Array.from(document.querySelectorAll('button, a, div')).find(e => (e.innerText||'').trim() === 'LOGIN');
                     if (h) { h.click(); return "OPENED"; }
                     return "WAIT_MODAL";
                 }
@@ -430,40 +372,28 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(script) { res ->
                     if (res?.contains("ALREADY_LOGGED") == true) {
                         tvStatus.text = "Step 1: Logged in!"
-                        if (isAutoRunning) safeDelay(2500) { runStep2_OpenMahara() }
+                        if (isAutoRunning) safeDelay(800) { runStep2_OpenMahara() }
                     } else if (res?.contains("SUBMITTED") == true) {
                         var verifyChecks = 0
                         val verify = object : Runnable {
                             override fun run() {
                                 verifyChecks++
-                                val checkJs = """
-                                    (function() {
-                                        let err = document.body.innerText.includes('Phone must be 10');
-                                        let logged = Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT');
-                                        if (logged) return 'LOGGED';
-                                        if (err) return 'REFILL_NEEDED';
-                                        return 'WAIT';
-                                    })()
-                                """.trimIndent()
-
+                                val checkJs = "(function(){ return Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT') ? 'LOGGED' : 'WAIT'; })()"
                                 webView.evaluateJavascript(checkJs) { status ->
-                                    if (status?.contains("LOGGED") == true || verifyChecks >= 12) {
+                                    if (status?.contains("LOGGED") == true || verifyChecks >= 10) {
                                         tvStatus.text = "Step 1: Logged in $phone!"
-                                        if (isAutoRunning) safeDelay(3000) { runStep2_OpenMahara() }
-                                    } else if (status?.contains("REFILL_NEEDED") == true) {
-                                        tvStatus.text = "Step 1: Auto-refilling $phone..."
-                                        handler.postDelayed({ runStep1_Login() }, 1000)
+                                        if (isAutoRunning) safeDelay(900) { runStep2_OpenMahara() }
                                     } else {
-                                        handler.postDelayed(this, 1000)
+                                        handler.postDelayed(this, 400)
                                     }
                                 }
                             }
                         }
-                        handler.postDelayed(verify, 2000)
+                        handler.postDelayed(verify, 700)
                     } else if (modalAttempts < 15) {
-                        handler.postDelayed(this, 800)
+                        handler.postDelayed(this, 400)
                     } else {
-                        safeDelay(1000) { runStep1_Login() }
+                        safeDelay(600) { runStep1_Login() }
                     }
                 }
             }
@@ -472,13 +402,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (Taps Circle Target ⭕ & Jumps to Board)
+    // 2. MAHARA (Direct Link & Fast Iframe Jump)
     // ========================================================
     private fun runStep2_OpenMahara() {
-        tvStatus.text = "Step 2: Entering game..."
-
-        // Dispatches simulated screen touch at the floating circle ⭕ coordinates
-        tapAtTargetDot()
+        tvStatus.text = "Step 2: Loading Mahara..."
+        webView.loadUrl(activeMaharaUrl)
 
         var attempts = 0
         val checkMahara = object : Runnable {
@@ -496,7 +424,7 @@ class MainActivity : AppCompatActivity() {
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP") == true) {
-                        tvStatus.text = "Step 2: Downloading match fixtures..."
+                        tvStatus.text = "Step 2: Entering board..."
                         var drawAttempts = 0
                         val checkDraws = object : Runnable {
                             override fun run() {
@@ -505,26 +433,26 @@ class MainActivity : AppCompatActivity() {
                                 webView.evaluateJavascript(countJs) { countStr ->
                                     val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
                                     if (count >= 17) {
-                                        tvStatus.text = "Step 2: All 17 matches ready!"
-                                        if (isAutoRunning) safeDelay(2500) { runStep3_PickAndBet() }
-                                    } else if (drawAttempts < 30) {
-                                        handler.postDelayed(this, 1000)
+                                        tvStatus.text = "Step 2: Matches ready!"
+                                        if (isAutoRunning) safeDelay(700) { runStep3_PickAndBet() }
+                                    } else if (drawAttempts < 25) {
+                                        handler.postDelayed(this, 400)
                                     }
                                 }
                             }
                         }
-                        handler.postDelayed(checkDraws, 2500)
-                    } else if (attempts < 25) {
-                        handler.postDelayed(this, 1000)
+                        handler.postDelayed(checkDraws, 600)
+                    } else if (attempts < 20) {
+                        handler.postDelayed(this, 400)
                     }
                 }
             }
         }
-        safeDelay(1500) { checkMahara.run() }
+        safeDelay(600) { checkMahara.run() }
     }
 
     // ========================================================
-    // 3. BET (Instant 17 Picks + Single Place Bet Click)
+    // 3. BET (Instant 17 Picks + Rapid Place Bet Tap)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -580,10 +508,10 @@ class MainActivity : AppCompatActivity() {
                     if (res?.contains("WAIT_RETRY") == true && retries < 15) {
                         retries++
                         tvStatus.text = "Loading matches ($retries/15)..."
-                        handler.postDelayed(this, 1000)
+                        handler.postDelayed(this, 400)
                     } else if (res?.contains("ALL_17_SELECTED") == true) {
-                        tvStatus.text = "Step 3: All 17 selected! Opening drawer..."
-                        safeDelay(1500) { triggerPlaceBet(accNum) }
+                        tvStatus.text = "Step 3: All 17 picked! Placing bet..."
+                        safeDelay(500) { triggerPlaceBet(accNum) }
                     } else {
                         tvStatus.text = "Step 3: $res"
                     }
@@ -619,13 +547,14 @@ class MainActivity : AppCompatActivity() {
                 attempts++
                 webView.evaluateJavascript(clickBetJs) { res ->
                     if (res?.contains("BET_CLICKED") == true || res?.contains("ALREADY_TAPPED") == true) {
-                        tvStatus.text = "SUCCESS: Acc #$accNum placed bet! Finalizing on server..."
-                        if (isAutoRunning) safeDelay(4500) { runStep4_LogoutAndNext() }
+                        tvStatus.text = "SUCCESS: Acc #$accNum placed bet!"
+                        // 1.5s server buffer gives full time to submit without waiting 5 seconds
+                        if (isAutoRunning) safeDelay(1500) { runStep4_LogoutAndNext() }
                     } else if (attempts < 15) {
-                        handler.postDelayed(this, 400)
+                        handler.postDelayed(this, 200)
                     } else {
                         tvStatus.text = "Step 3: Bet submitted."
-                        if (isAutoRunning) safeDelay(3000) { runStep4_LogoutAndNext() }
+                        if (isAutoRunning) safeDelay(1000) { runStep4_LogoutAndNext() }
                     }
                 }
             }
@@ -634,15 +563,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT
+    // 4. NEXT (Fast Wipe & Immediate Reload)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
-        tvStatus.text = "Step 4: Clearing session & loading next..."
+        tvStatus.text = "Step 4: Clearing session..."
         isStepActive = false
         handler.removeCallbacksAndMessages(null)
 
         WebStorage.getInstance().deleteAllData()
-        webView.clearCache(true)
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.removeAllCookies {
