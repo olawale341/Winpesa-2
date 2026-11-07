@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#151515"
+        android:padding="6dp"
+        android:gravity="center_vertical">
+        <TextView
+            android:id="@+id/tvAccountInfo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Acc: #0/0 | Tap DATA"
+            android:textColor="#FFCC00"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+        <Button
+            android:id="@+id/btnAutoRun"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:backgroundTint="#00AA44"
+            android:text="▶️ AUTO"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:layout_marginEnd="4dp" />
+        <Button
+            android:id="@+id/btnDataMenu"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:backgroundTint="#6F42C1"
+            android:text="⚙️ DATA"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#222"
+        android:padding="6dp"
+        android:text="Status: Ready"
+        android:textColor="#00FF66"
+        android:textSize="12sp" />
+
+    <!-- Container housing WebView and Draggable Target ⭕ -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <WebView
+            android:id="@+id/webView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <ImageView
+            android:id="@+id/targetDot"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="top|start"
+            android:layout_marginStart="160dp"
+            android:layout_marginTop="200dp"
+            android:src="@drawable/target_dot"
+            android:contentDescription="Touch Target" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:weightSum="4"
+        android:background="#000"
+        android:padding="2dp">
+        <Button
+            android:id="@+id/btnStep1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:backgroundTint="#007BFF"
+            android:text="1.LOGIN"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
+        <Button
+            android:id="@+id/btnStep2"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:backgroundTint="#FF8800"
+            android:text="2.MAHARA"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
+        <Button
+            android:id="@+id/btnStep3"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:backgroundTint="#28A745"
+            android:text="3.BET"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
+        <Button
+            android:id="@+id/btnStep4"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:backgroundTint="#DC3545"
+            android:text="4.NEXT"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
+    </LinearLayout>
+</LinearLayout>
