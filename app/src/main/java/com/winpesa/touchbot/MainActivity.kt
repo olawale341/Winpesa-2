@@ -1,6 +1,6 @@
-package com.winpesa.touchbot
+package com.winpesa.autobot
 
-import com.winpesa.touchbot.R
+import com.winpesa.autobot.R
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.net.Uri
@@ -48,6 +48,9 @@ class MainActivity : AppCompatActivity() {
     private var isStepActive = false
     private var speedMultiplier = 1.0f
 
+    // Data Saver: Block all game pictures & banners for 5x speed and zero wasted data
+    private var blockImages = false
+
     private var filePickTarget = "NUMBERS"
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { handleUploadedFile(it) }
@@ -69,8 +72,8 @@ class MainActivity : AppCompatActivity() {
         btnStep4 = findViewById(R.id.btnStep4)
         webView = findViewById(R.id.webView)
 
-        setupWebView()
         loadPersistedData()
+        setupWebView()
 
         btnAutoRun.setOnClickListener { toggleAutoRun() }
         btnDataMenu.setOnClickListener { showDataManagementMenu() }
@@ -93,6 +96,11 @@ class MainActivity : AppCompatActivity() {
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
         s.cacheMode = WebSettings.LOAD_DEFAULT
+
+        // Apply Data Saver: Suppress image downloads if active
+        s.blockNetworkImage = blockImages
+        s.loadsImagesAutomatically = !blockImages
+
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.userAgentString = s.userAgentString.replace("; wv", "")
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -177,9 +185,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // ⚙️ DATA MANAGEMENT MENU
+    // ⚙️ DATA MANAGEMENT MENU (With Image Blocker / Data Saver)
     // ========================================================
     private fun showDataManagementMenu() {
+        val imgLabel = if (blockImages) "🖼️ Game Images: BLOCKED (Data Saver ON)" else "🖼️ Game Images: ALLOWED (Normal)"
+
         val options = arrayOf(
             "📱 Numbers: Paste Text",
             "📁 Numbers: Upload .txt File",
@@ -187,6 +197,7 @@ class MainActivity : AppCompatActivity() {
             "📁 Patterns: Upload .txt File",
             "🔑 Set Common Password",
             "⚡ Set Speed (${speedMultiplier}x)",
+            imgLabel,
             "⚠️ Skipped Accounts (${skippedAccountsList.size})",
             "🔢 Jump to Specific Account #",
             "🔄 Reset Progress to Account #1",
@@ -202,13 +213,23 @@ class MainActivity : AppCompatActivity() {
                     3 -> { filePickTarget = "PATTERNS"; filePickerLauncher.launch("text/*") }
                     4 -> showPasswordDialog()
                     5 -> showSpeedSelectionDialog()
-                    6 -> showSkippedAccountsDialog()
-                    7 -> showJumpToAccountDialog()
-                    8 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
-                    9 -> confirmWipeAllData()
+                    6 -> toggleImageBlocking()
+                    7 -> showSkippedAccountsDialog()
+                    8 -> showJumpToAccountDialog()
+                    9 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
+                    10 -> confirmWipeAllData()
                 }
             }
             .setNegativeButton("Close", null).show()
+    }
+
+    private fun toggleImageBlocking() {
+        blockImages = !blockImages
+        webView.settings.blockNetworkImage = blockImages
+        webView.settings.loadsImagesAutomatically = !blockImages
+        saveData()
+        val status = if (blockImages) "Images BLOCKED: Ultra Fast & Low Data Usage!" else "Images ALLOWED: Normal mode"
+        Toast.makeText(this, status, Toast.LENGTH_SHORT).show()
     }
 
     private fun showSkippedAccountsDialog() {
@@ -284,7 +305,8 @@ class MainActivity : AppCompatActivity() {
                 patternsList.clear()
                 skippedAccountsList.clear()
                 currentIndex = 0
-                getSharedPreferences("winpesa_touchbot", MODE_PRIVATE).edit().clear().apply()
+                val prefs = getSharedPreferences("winpesa_bot_data", MODE_PRIVATE)
+                prefs.edit().clear().apply()
                 saveData(); updateUI()
                 tvStatus.text = "All data cleared! Ready for new batch."
             }
@@ -369,17 +391,18 @@ class MainActivity : AppCompatActivity() {
     private fun updateUI() {
         val numCount = numbersList.size
         val patCount = patternsList.size
+        val dataSaver = if (blockImages) "[Data Saver: ON] " else ""
         if (numCount == 0) {
-            tvAccountInfo.text = "Acc: #0/0 | Speed: ${speedMultiplier}x"
+            tvAccountInfo.text = "Acc: #0/0 | ${dataSaver}Speed: ${speedMultiplier}x"
         } else {
             val phone = numbersList.getOrElse(currentIndex) { "None" }
             val pattern = if (patCount > 0) patternsList[currentIndex % patCount] else "None"
-            tvAccountInfo.text = "Acc #${currentIndex + 1}/$numCount (${speedMultiplier}x): $phone\nPat: $pattern"
+            tvAccountInfo.text = "Acc #${currentIndex + 1}/$numCount: $phone\n${dataSaver}Pat: $pattern"
         }
     }
 
     private fun saveData() {
-        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_bot_data", MODE_PRIVATE)
         prefs.edit()
             .putString("numbers", numbersList.joinToString("\n"))
             .putString("patterns", patternsList.joinToString("\n"))
@@ -387,14 +410,16 @@ class MainActivity : AppCompatActivity() {
             .putString("password", commonPassword)
             .putInt("index", currentIndex)
             .putFloat("speed_multiplier", speedMultiplier)
+            .putBoolean("block_images", blockImages)
             .apply()
     }
 
     private fun loadPersistedData() {
-        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_bot_data", MODE_PRIVATE)
         commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
         currentIndex = prefs.getInt("index", 0)
         speedMultiplier = prefs.getFloat("speed_multiplier", 1.0f).coerceIn(0.2f, 5.0f)
+        blockImages = prefs.getBoolean("block_images", false)
 
         val nums = prefs.getString("numbers", "") ?: ""
         if (nums.isNotEmpty()) { numbersList.clear(); numbersList.addAll(nums.split("\n").map { sanitizePhone(it) }) }
@@ -409,7 +434,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN (With Smart Error Detection & Auto-Skip)
+    // 1. LOGIN
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -479,7 +504,6 @@ class MainActivity : AppCompatActivity() {
                                         let logged = Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT');
                                         if (logged) return 'LOGGED';
 
-                                        // Error Detection
                                         if (text.includes('incorrect password') || text.includes('wrong password') || text.includes('invalid password')) return 'ERR_PASSWORD';
                                         if (text.includes('not register') || text.includes('user not found') || text.includes('not exist') || text.includes('invalid account')) return 'ERR_UNREGISTERED';
                                         if (text.includes('phone must be 10')) return 'REFILL_NEEDED';
