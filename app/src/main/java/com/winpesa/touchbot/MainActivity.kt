@@ -1,6 +1,6 @@
-package com.winpesa.autobot
+package com.winpesa.touchbot
 
-import com.winpesa.autobot.R
+import com.winpesa.touchbot.R
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.net.Uri
