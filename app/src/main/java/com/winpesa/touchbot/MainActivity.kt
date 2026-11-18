@@ -7,6 +7,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -47,9 +49,10 @@ class MainActivity : AppCompatActivity() {
     private var isAutoRunning = false
     private var isStepActive = false
     private var speedMultiplier = 1.0f
-
-    // Data Saver: Block all game pictures & banners for 5x speed and zero wasted data
     private var blockImages = false
+
+    // Dedicated watchdog for Mahara only
+    private var maharaWatchdog: Runnable? = null
 
     private var filePickTarget = "NUMBERS"
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -87,6 +90,19 @@ class MainActivity : AppCompatActivity() {
         return (baseMs / speedMultiplier).toLong().coerceAtLeast(150L)
     }
 
+    private fun simulateHardwareTouch(x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        val density = resources.displayMetrics.density
+        val px = x * density
+        val py = y * density
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, px, py, 0)
+        val up = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, px, py, 0)
+        webView.dispatchTouchEvent(down)
+        webView.dispatchTouchEvent(up)
+        down.recycle()
+        up.recycle()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         val s = webView.settings
@@ -97,7 +113,6 @@ class MainActivity : AppCompatActivity() {
         s.loadWithOverviewMode = true
         s.cacheMode = WebSettings.LOAD_DEFAULT
 
-        // Apply Data Saver: Suppress image downloads if active
         s.blockNetworkImage = blockImages
         s.loadsImagesAutomatically = !blockImages
 
@@ -113,10 +128,6 @@ class MainActivity : AppCompatActivity() {
                 dismissBanners()
                 if (url != null && url.contains("winpesa.ng")) {
                     detectDynamicMaharaLink()
-                    if (isAutoRunning && !isStepActive && url.trimEnd('/') == "https://winpesa.ng") {
-                        tvStatus.text = "Account #${currentIndex + 1}..."
-                        safeDelay(getDelay(1200L)) { runStep1_Login() }
-                    }
                 }
             }
 
@@ -131,12 +142,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun safeDelay(delayMs: Long, action: () -> Unit) {
-        handler.removeCallbacksAndMessages(null)
         handler.postDelayed({ action() }, delayMs)
     }
 
     private fun dismissBanners() {
-        val js = "(function(){ Array.from(document.querySelectorAll('button,div,span,a')).forEach(e=>{ let t=(e.innerText||'').trim().toLowerCase(); if(t==='got it'||t==='accept'||t==='×'||t==='x') e.click(); }); })()"
+        val js = """
+            (function() {
+                Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
+                    let t = (e.innerText||'').trim().toLowerCase();
+                    if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') {
+                        try { e.click(); } catch(err) {}
+                    }
+                });
+            })();
+        """.trimIndent()
         webView.evaluateJavascript(js, null)
     }
 
@@ -148,6 +167,7 @@ class MainActivity : AppCompatActivity() {
         if (isAutoRunning) {
             isAutoRunning = false
             isStepActive = false
+            maharaWatchdog?.let { handler.removeCallbacks(it) }
             handler.removeCallbacksAndMessages(null)
             btnAutoRun.text = "▶️ AUTO"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_green_dark)
@@ -185,7 +205,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // ⚙️ DATA MANAGEMENT MENU (With Image Blocker / Data Saver)
+    // ⚙️ DATA MANAGEMENT MENU
     // ========================================================
     private fun showDataManagementMenu() {
         val imgLabel = if (blockImages) "🖼️ Game Images: BLOCKED (Data Saver ON)" else "🖼️ Game Images: ALLOWED (Normal)"
@@ -237,7 +257,7 @@ class MainActivity : AppCompatActivity() {
         val msg = if (count == 0) {
             "No accounts have been skipped! All accounts have succeeded."
         } else {
-            "Total Failed: $count\n\n" + skippedAccountsList.joinToString("\n")
+            "Total Skipped: $count\n\n" + skippedAccountsList.joinToString("\n")
         }
 
         AlertDialog.Builder(this)
@@ -247,6 +267,7 @@ class MainActivity : AppCompatActivity() {
             .setNeutralButton("Clear List") { _, _ ->
                 skippedAccountsList.clear()
                 saveData()
+                updateUI()
                 Toast.makeText(this, "Skipped list cleared!", Toast.LENGTH_SHORT).show()
             }
             .show()
@@ -256,10 +277,8 @@ class MainActivity : AppCompatActivity() {
         val entry = "Acc #${currentIndex + 1}: $phone ($reason)"
         skippedAccountsList.add(entry)
         saveData()
+        updateUI()
         tvStatus.text = "⚠️ Skipped: $entry"
-        if (isAutoRunning) {
-            safeDelay(1200L) { runStep4_LogoutAndNext() }
-        }
     }
 
     private fun showSpeedSelectionDialog() {
@@ -305,7 +324,7 @@ class MainActivity : AppCompatActivity() {
                 patternsList.clear()
                 skippedAccountsList.clear()
                 currentIndex = 0
-                val prefs = getSharedPreferences("winpesa_bot_data", MODE_PRIVATE)
+                val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
                 prefs.edit().clear().apply()
                 saveData(); updateUI()
                 tvStatus.text = "All data cleared! Ready for new batch."
@@ -402,7 +421,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveData() {
-        val prefs = getSharedPreferences("winpesa_bot_data", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
         prefs.edit()
             .putString("numbers", numbersList.joinToString("\n"))
             .putString("patterns", patternsList.joinToString("\n"))
@@ -415,7 +434,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadPersistedData() {
-        val prefs = getSharedPreferences("winpesa_bot_data", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
         commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
         currentIndex = prefs.getInt("index", 0)
         speedMultiplier = prefs.getFloat("speed_multiplier", 1.0f).coerceIn(0.2f, 5.0f)
@@ -434,7 +453,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN
+    // 1. LOGIN (Patient & Reliable - No Premature Timeout)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -446,7 +465,6 @@ class MainActivity : AppCompatActivity() {
         isStepActive = true
         val phone = numbersList[currentIndex]
         tvStatus.text = "Step 1: Logging in $phone..."
-        val submitDelay = getDelay(500L)
 
         val script = """
             (function() {
@@ -471,8 +489,8 @@ class MainActivity : AppCompatActivity() {
                             let t = (b.innerText||'').trim();
                             return t === 'LOGIN' && b.offsetWidth > 80;
                         });
-                        if (btn && p.value.length >= 10) btn.click();
-                    }, $submitDelay);
+                        if (btn) btn.click();
+                    }, 500);
                     return "SUBMITTED";
                 } else {
                     let h = Array.from(document.querySelectorAll('button, a, div')).find(e => {
@@ -485,19 +503,15 @@ class MainActivity : AppCompatActivity() {
             })();
         """.trimIndent()
 
-        var modalAttempts = 0
         val execLogin = object : Runnable {
             override fun run() {
-                modalAttempts++
                 webView.evaluateJavascript(script) { res ->
                     if (res?.contains("ALREADY_LOGGED") == true) {
                         tvStatus.text = "Step 1: Logged in!"
                         if (isAutoRunning) safeDelay(getDelay(800L)) { runStep2_OpenMahara() }
                     } else if (res?.contains("SUBMITTED") == true) {
-                        var verifyChecks = 0
                         val verify = object : Runnable {
                             override fun run() {
-                                verifyChecks++
                                 val checkJs = """
                                     (function() {
                                         let text = (document.body.innerText || '').toLowerCase();
@@ -518,12 +532,12 @@ class MainActivity : AppCompatActivity() {
                                         if (isAutoRunning) safeDelay(getDelay(900L)) { runStep2_OpenMahara() }
                                     } else if (status?.contains("ERR_PASSWORD") == true) {
                                         logSkippedAccount(phone, "Incorrect Password")
+                                        if (isAutoRunning) safeDelay(800L) { runStep4_LogoutAndNext() }
                                     } else if (status?.contains("ERR_UNREGISTERED") == true) {
                                         logSkippedAccount(phone, "Number Not Registered")
+                                        if (isAutoRunning) safeDelay(800L) { runStep4_LogoutAndNext() }
                                     } else if (status?.contains("REFILL_NEEDED") == true) {
                                         handler.postDelayed({ runStep1_Login() }, 500L)
-                                    } else if (verifyChecks >= 12) {
-                                        logSkippedAccount(phone, "Login Timeout")
                                     } else {
                                         handler.postDelayed(this, 500L)
                                     }
@@ -531,10 +545,8 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                         handler.postDelayed(verify, 700L)
-                    } else if (modalAttempts < 15) {
-                        handler.postDelayed(this, 400L)
                     } else {
-                        safeDelay(600L) { runStep1_Login() }
+                        handler.postDelayed(this, 400L)
                     }
                 }
             }
@@ -543,53 +555,114 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA
+    // 2. MAHARA (7-Second Watchdog: Auto-Skips on Mahara Timeout ONLY)
     // ========================================================
     private fun runStep2_OpenMahara() {
-        tvStatus.text = "Step 2: Loading Mahara..."
+        tvStatus.text = "Step 2: Entering Mahara..."
         webView.loadUrl(activeMaharaUrl)
 
-        var attempts = 0
+        maharaWatchdog?.let { handler.removeCallbacks(it) }
+
+        // Start 7.0s Watchdog: If Mahara stalls, marks "Mahara Timeout" & forces NEXT!
+        maharaWatchdog = Runnable {
+            if (isAutoRunning) {
+                val phone = numbersList.getOrElse(currentIndex) { "Account" }
+                tvStatus.text = "⚠️ Mahara Timeout. Forcing NEXT for $phone..."
+                logSkippedAccount(phone, "Mahara Timeout")
+                runStep4_LogoutAndNext()
+            }
+        }
+        handler.postDelayed(maharaWatchdog!!, 7000L)
+
         val checkMahara = object : Runnable {
             override fun run() {
-                attempts++
+                if (!isStepActive && !isAutoRunning) return
+
                 val js = """
                     (function() {
-                        let f = document.querySelector('iframe');
-                        if (f && f.src && f.src.includes('aggrhub.com')) { window.location.href = f.src; return "JUMP"; }
-                        let p = Array.from(document.querySelectorAll('button, div, a')).find(e => (e.innerText||'').trim() === 'PLAY');
-                        if (p) { p.click(); return "PLAY"; }
-                        return "WAIT";
+                        let iframes = Array.from(document.querySelectorAll('iframe'));
+                        let aggr = iframes.find(f => f.src && (f.src.includes('aggrhub.com') || f.src.includes('soccer13') || f.src.includes('session=')));
+                        if (aggr) return "JUMP:" + aggr.src;
+
+                        Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
+                            let t = (e.innerText||'').trim().toLowerCase();
+                            if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') {
+                                try { e.click(); } catch(err) {}
+                            }
+                        });
+
+                        let playBtn = Array.from(document.querySelectorAll('button, [role="button"], a, div')).find(el => {
+                            let t = (el.innerText || '').trim().toUpperCase();
+                            return t === 'PLAY' && el.offsetWidth > 40;
+                        });
+
+                        if (playBtn) {
+                            let rect = playBtn.getBoundingClientRect();
+                            try {
+                                let touch = new Touch({ identifier: Date.now(), target: playBtn, clientX: rect.left+rect.width/2, clientY: rect.top+rect.height/2 });
+                                playBtn.dispatchEvent(new TouchEvent('touchstart', { touches: [touch], targetTouches: [touch], changedTouches: [touch], bubbles: true }));
+                                playBtn.dispatchEvent(new TouchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [touch], bubbles: true }));
+                            } catch(e) {}
+                            try { playBtn.click(); } catch(e) {}
+                            let p = playBtn.closest('button, [role="button"], a');
+                            if (p) { try { p.click(); } catch(e) {} }
+
+                            return "TOUCH:" + (rect.left + rect.width/2) + ":" + (rect.top + rect.height/2);
+                        }
+
+                        return "WAIT_MODAL";
                     })();
                 """.trimIndent()
 
                 webView.evaluateJavascript(js) { res ->
-                    if (res?.contains("JUMP") == true) {
-                        tvStatus.text = "Step 2: Entering board..."
-                        var drawAttempts = 0
-                        val checkDraws = object : Runnable {
-                            override fun run() {
-                                drawAttempts++
-                                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
-                                webView.evaluateJavascript(countJs) { countStr ->
-                                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
-                                    if (count >= 17) {
-                                        tvStatus.text = "Step 2: Matches ready!"
-                                        if (isAutoRunning) safeDelay(getDelay(700L)) { runStep3_PickAndBet() }
-                                    } else if (drawAttempts < 25) {
-                                        handler.postDelayed(this, 400L)
-                                    }
-                                }
+                    if (res?.contains("JUMP:") == true) {
+                        maharaWatchdog?.let { handler.removeCallbacks(it) }
+
+                        val gameUrl = res.replace("\"", "").substringAfter("JUMP:")
+                        tvStatus.text = "Step 2: Inside match board!"
+                        webView.loadUrl(gameUrl)
+                        waitFor17Fixtures()
+                    } else {
+                        if (res?.contains("TOUCH:") == true) {
+                            val clean = res.replace("\"", "").substringAfter("TOUCH:")
+                            val parts = clean.split(":")
+                            if (parts.size == 2) {
+                                val x = parts[0].toFloatOrNull() ?: 0f
+                                val y = parts[1].toFloatOrNull() ?: 0f
+                                if (x > 0 && y > 0) simulateHardwareTouch(x, y)
                             }
                         }
-                        handler.postDelayed(checkDraws, 600L)
-                    } else if (attempts < 20) {
-                        handler.postDelayed(this, 400L)
+                        handler.postDelayed(this, 500L)
                     }
                 }
             }
         }
         safeDelay(600L) { checkMahara.run() }
+    }
+
+    private fun waitFor17Fixtures() {
+        var drawAttempts = 0
+        val checkDraws = object : Runnable {
+            override fun run() {
+                drawAttempts++
+                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
+                webView.evaluateJavascript(countJs) { countStr ->
+                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
+                    if (count >= 17) {
+                        tvStatus.text = "Step 2: All 17 matches confirmed!"
+                        if (isAutoRunning) safeDelay(getDelay(500L)) { runStep3_PickAndBet() }
+                    } else if (drawAttempts >= 20) {
+                        val phone = numbersList.getOrElse(currentIndex) { "Account" }
+                        logSkippedAccount(phone, "Mahara Timeout")
+                        if (isAutoRunning) safeDelay(800L) { runStep4_LogoutAndNext() }
+                    } else {
+                        tvStatus.text = "Loading matches ($count/17)..."
+                        handler.postDelayed(this, 500L)
+                    }
+                }
+            }
+        }
+        handler.postDelayed(checkDraws, 800L)
     }
 
     // ========================================================
@@ -708,7 +781,7 @@ class MainActivity : AppCompatActivity() {
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session..."
         isStepActive = false
-        handler.removeCallbacksAndMessages(null)
+        maharaWatchdog?.let { handler.removeCallbacks(it) }
 
         WebStorage.getInstance().deleteAllData()
 
@@ -731,6 +804,10 @@ class MainActivity : AppCompatActivity() {
                 saveData()
                 updateUI()
                 webView.loadUrl("https://winpesa.ng")
+
+                if (isAutoRunning) {
+                    safeDelay(1600L) { runStep1_Login() }
+                }
             }
         }
     }
