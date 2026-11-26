@@ -1,8 +1,11 @@
-package com.winpesa.touchbot
+package com.winpesa.autobot
 
-import com.winpesa.touchbot.R
+import com.winpesa.autobot.R
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -43,17 +46,23 @@ class MainActivity : AppCompatActivity() {
     private val numbersList = mutableListOf<String>()
     private val patternsList = mutableListOf<String>()
     
-    // Stores skipped accounts with format: "phone|pattern|reason|originalAccountNum"
+    // Format: "phone|pattern|reason|originalAccountNum"
     private val skippedDataList = mutableListOf<String>()
 
     private var currentIndex = 0
     private var commonPassword = "YourDefaultPassword123"
     private var isAutoRunning = false
     private var isStepActive = false
+    private var isLoggingOut = false
     private var speedMultiplier = 1.0f
     private var blockImages = false
 
+    // Step 1: Login Retry Counter & Watchdog
+    private var loginRetryCount = 0
     private var loginWatchdog: Runnable? = null
+
+    // Step 2: Mahara Retry Counter & Watchdog
+    private var maharaRetryCount = 0
     private var maharaWatchdog: Runnable? = null
 
     private var filePickTarget = "NUMBERS"
@@ -82,8 +91,14 @@ class MainActivity : AppCompatActivity() {
 
         btnAutoRun.setOnClickListener { toggleAutoRun() }
         btnDataMenu.setOnClickListener { showDataManagementMenu() }
-        btnStep1.setOnClickListener { runStep1_Login() }
-        btnStep2.setOnClickListener { runStep2_OpenMahara() }
+        btnStep1.setOnClickListener { 
+            loginRetryCount = 0
+            runStep1_Login() 
+        }
+        btnStep2.setOnClickListener { 
+            maharaRetryCount = 0
+            runStep2_OpenMahara() 
+        }
         btnStep3.setOnClickListener { runStep3_PickAndBet() }
         btnStep4.setOnClickListener { runStep4_LogoutAndNext() }
     }
@@ -181,6 +196,7 @@ class MainActivity : AppCompatActivity() {
             btnAutoRun.text = "⏸️ PAUSE"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_red_dark)
             tvStatus.text = "▶️ Auto-Run (${speedMultiplier}x): Acc #${currentIndex + 1}..."
+            loginRetryCount = 0
             runStep1_Login()
         }
     }
@@ -248,7 +264,6 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Close", null).show()
     }
 
-    // Re-runs only the failed accounts in sequence
     private fun rerunSkippedAccounts() {
         if (skippedDataList.isEmpty()) {
             Toast.makeText(this, "No skipped accounts to re-run!", Toast.LENGTH_SHORT).show()
@@ -258,55 +273,55 @@ class MainActivity : AppCompatActivity() {
         val count = skippedDataList.size
         AlertDialog.Builder(this)
             .setTitle("🔄 Re-run $count Skipped Accounts?")
-            .setMessage("This will load only the $count failed accounts (like #59, #356) and their exact patterns so the bot can retry them one by one. Continue?")
+            .setMessage("This will load only the $count failed accounts (one by one) with their exact matching patterns. Ready to start?")
             .setPositiveButton("Yes, Start Re-run") { _, _ ->
-            val newNumbers = mutableListOf<String>()
-            val newPatterns = mutableListOf<String>()
-            for (item in skippedDataList) {
-                val parts = item.split("|")
-                if (parts.isNotEmpty()) newNumbers.add(parts[0])
-                if (parts.size >= 2) newPatterns.add(parts[1])
+                val newNumbers = mutableListOf<String>()
+                val newPatterns = mutableListOf<String>()
+                for (item in skippedDataList) {
+                    val parts = item.split("|")
+                    if (parts.isNotEmpty()) newNumbers.add(parts[0])
+                    if (parts.size >= 2) newPatterns.add(parts[1])
+                }
+
+                numbersList.clear()
+                numbersList.addAll(newNumbers)
+
+                patternsList.clear()
+                patternsList.addAll(newPatterns)
+
+                skippedDataList.clear()
+                currentIndex = 0
+                isLoggingOut = false
+                loginRetryCount = 0
+                maharaRetryCount = 0
+
+                saveData()
+                updateUI()
+
+                tvStatus.text = "Loaded $count skipped accounts! Starting..."
+                if (!isAutoRunning) {
+                    toggleAutoRun()
+                } else {
+                    runStep1_Login()
+                }
             }
-
-            numbersList.clear()
-            numbersList.addAll(newNumbers)
-
-            patternsList.clear()
-            patternsList.addAll(newPatterns)
-
-            skippedDataList.clear()
-            currentIndex = 0
-
-            saveData()
-            updateUI()
-
-            tvStatus.text = "Loaded $count skipped accounts! Starting..."
-            if (!isAutoRunning) {
-                toggleAutoRun()
-            } else {
-                runStep1_Login()
-            }
-        }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
     private fun showSkippedAccountsDialog() {
         val count = skippedDataList.size
-        val msg = if (count == 0) {
-            "No accounts have been skipped! All accounts have succeeded."
-        } else {
-            val lines = skippedDataList.map { item ->
-                val p = item.split("|")
-                val phone = p.getOrElse(0) { "" }
-                val reason = p.getOrElse(2) { "Unknown" }
-                val origNum = p.getOrElse(3) { "?" }
-                "Acc #$origNum: $phone ($reason)"
-            }
-            "Total Skipped: $count\n\n" + lines.joinToString("\n")
+        val lines = skippedDataList.map { item ->
+            val p = item.split("|")
+            val phone = p.getOrElse(0) { "" }
+            val reason = p.getOrElse(2) { "Unknown" }
+            val origNum = p.getOrElse(3) { "?" }
+            "Acc #$origNum: $phone ($reason)"
         }
 
-        AlertDialog.Builder(this)
+        val msg = if (count == 0) "No accounts have been skipped!" else "Total Skipped: $count\n\n" + lines.joinToString("\n")
+
+        val builder = AlertDialog.Builder(this)
             .setTitle("⚠️ Skipped Accounts ($count)")
             .setMessage(msg)
             .setPositiveButton("OK", null)
@@ -316,7 +331,16 @@ class MainActivity : AppCompatActivity() {
                 updateUI()
                 Toast.makeText(this, "Skipped list cleared!", Toast.LENGTH_SHORT).show()
             }
-            .show()
+
+        if (count > 0) {
+            builder.setNegativeButton("📋 Copy All") { _, _ ->
+                val rawNumbers = skippedDataList.map { it.split("|")[0] }.joinToString("\n")
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Skipped Accounts", rawNumbers))
+                Toast.makeText(this, "Copied $count phone numbers to clipboard!", Toast.LENGTH_LONG).show()
+            }
+        }
+        builder.show()
     }
 
     private fun logSkippedAccount(phone: String, reason: String) {
@@ -380,6 +404,9 @@ class MainActivity : AppCompatActivity() {
                 patternsList.clear()
                 skippedDataList.clear()
                 currentIndex = 0
+                isLoggingOut = false
+                loginRetryCount = 0
+                maharaRetryCount = 0
                 val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
                 prefs.edit().clear().apply()
                 saveData(); updateUI()
@@ -509,7 +536,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN (Patient Input & 12-Second Timeout Watchdog)
+    // 1. LOGIN (7s Watchdog: Re-taps 1. LOGIN, then Skips)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -519,20 +546,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         isStepActive = true
+        isLoggingOut = false
         val phone = numbersList[currentIndex]
-        tvStatus.text = "Step 1: Logging in $phone..."
+        tvStatus.text = if (loginRetryCount == 0) "Step 1: Logging in $phone..." else "Step 1: Re-tapping 1. LOGIN ($phone)..."
 
         loginWatchdog?.let { handler.removeCallbacks(it) }
 
-        // 12-Second Login Watchdog
+        // 7-Second Login Watchdog (Re-taps 1. LOGIN on first stall, then skips on second)
         loginWatchdog = Runnable {
             if (isAutoRunning) {
-                tvStatus.text = "⚠️ Login stuck (12s). Auto-skipping $phone..."
-                logSkippedAccount(phone, "Login Timeout")
-                runStep4_LogoutAndNext()
+                if (loginRetryCount == 0) {
+                    loginRetryCount = 1
+                    tvStatus.text = "⚠️ Login stuck (7s). Re-tapping 1. LOGIN..."
+                    runStep1_Login()
+                } else {
+                    loginRetryCount = 0
+                    tvStatus.text = "⚠️ Login failed after retry. Skipping $phone..."
+                    logSkippedAccount(phone, "Login Stuck (Retried)")
+                    runStep4_LogoutAndNext()
+                }
             }
         }
-        handler.postDelayed(loginWatchdog!!, 12000L)
+        handler.postDelayed(loginWatchdog!!, 7000L)
 
         val script = """
             (function() {
@@ -576,8 +611,12 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(script) { res ->
                     if (res?.contains("ALREADY_LOGGED") == true) {
                         loginWatchdog?.let { handler.removeCallbacks(it) }
+                        loginRetryCount = 0
                         tvStatus.text = "Step 1: Logged in!"
-                        if (isAutoRunning) safeDelay(getDelay(800L)) { runStep2_OpenMahara() }
+                        if (isAutoRunning) safeDelay(getDelay(800L)) { 
+                            maharaRetryCount = 0
+                            runStep2_OpenMahara() 
+                        }
                     } else if (res?.contains("SUBMITTED") == true) {
                         val verify = object : Runnable {
                             override fun run() {
@@ -598,16 +637,22 @@ class MainActivity : AppCompatActivity() {
                                 webView.evaluateJavascript(checkJs) { status ->
                                     if (status?.contains("LOGGED") == true) {
                                         loginWatchdog?.let { handler.removeCallbacks(it) }
+                                        loginRetryCount = 0
                                         tvStatus.text = "Step 1: Logged in $phone!"
-                                        if (isAutoRunning) safeDelay(getDelay(900L)) { runStep2_OpenMahara() }
+                                        if (isAutoRunning) safeDelay(getDelay(900L)) { 
+                                            maharaRetryCount = 0
+                                            runStep2_OpenMahara() 
+                                        }
                                     } else if (status?.contains("ERR_PASSWORD") == true) {
                                         loginWatchdog?.let { handler.removeCallbacks(it) }
+                                        loginRetryCount = 0
                                         logSkippedAccount(phone, "Incorrect Password")
-                                        if (isAutoRunning) safeDelay(800L) { runStep4_LogoutAndNext() }
+                                        if (isAutoRunning) runStep4_LogoutAndNext()
                                     } else if (status?.contains("ERR_UNREGISTERED") == true) {
                                         loginWatchdog?.let { handler.removeCallbacks(it) }
+                                        loginRetryCount = 0
                                         logSkippedAccount(phone, "Number Not Registered")
-                                        if (isAutoRunning) safeDelay(800L) { runStep4_LogoutAndNext() }
+                                        if (isAutoRunning) runStep4_LogoutAndNext()
                                     } else if (status?.contains("REFILL_NEEDED") == true) {
                                         handler.postDelayed({ runStep1_Login() }, 500L)
                                     } else {
@@ -627,24 +672,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (With 7.0s Watchdog Auto-Skip if Stuck)
+    // 2. MAHARA (6s Watchdog: Re-taps 2. MAHARA, then Skips)
     // ========================================================
     private fun runStep2_OpenMahara() {
-        tvStatus.text = "Step 2: Entering Mahara..."
+        tvStatus.text = if (maharaRetryCount == 0) "Step 2: Entering Mahara..." else "Step 2: Re-tapping 2. MAHARA..."
         webView.loadUrl(activeMaharaUrl)
 
         maharaWatchdog?.let { handler.removeCallbacks(it) }
 
-        // 7.0s Mahara Watchdog
+        // 6-Second Mahara Watchdog
         maharaWatchdog = Runnable {
             if (isAutoRunning) {
-                val phone = numbersList.getOrElse(currentIndex) { "Account" }
-                tvStatus.text = "⚠️ Mahara Timeout. Forcing NEXT for $phone..."
-                logSkippedAccount(phone, "Mahara Timeout")
-                runStep4_LogoutAndNext()
+                if (maharaRetryCount == 0) {
+                    maharaRetryCount = 1
+                    tvStatus.text = "⚠️ Mahara stuck (6s). Re-tapping 2. MAHARA..."
+                    runStep2_OpenMahara()
+                } else {
+                    maharaRetryCount = 0
+                    val phone = numbersList.getOrElse(currentIndex) { "Account" }
+                    tvStatus.text = "⚠️ Mahara failed after retry. Skipping $phone..."
+                    logSkippedAccount(phone, "Mahara Stuck (Retried)")
+                    runStep4_LogoutAndNext()
+                }
             }
         }
-        handler.postDelayed(maharaWatchdog!!, 7000L)
+        handler.postDelayed(maharaWatchdog!!, 6000L)
 
         val checkMahara = object : Runnable {
             override fun run() {
@@ -689,6 +741,7 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP:") == true) {
                         maharaWatchdog?.let { handler.removeCallbacks(it) }
+                        maharaRetryCount = 0
 
                         val gameUrl = res.replace("\"", "").substringAfter("JUMP:")
                         tvStatus.text = "Step 2: Inside match board!"
@@ -725,8 +778,8 @@ class MainActivity : AppCompatActivity() {
                         if (isAutoRunning) safeDelay(getDelay(500L)) { runStep3_PickAndBet() }
                     } else if (drawAttempts >= 20) {
                         val phone = numbersList.getOrElse(currentIndex) { "Account" }
-                        logSkippedAccount(phone, "Mahara Timeout")
-                        if (isAutoRunning) safeDelay(800L) { runStep4_LogoutAndNext() }
+                        logSkippedAccount(phone, "Fixtures Timeout")
+                        if (isAutoRunning) runStep4_LogoutAndNext()
                     } else {
                         tvStatus.text = "Loading matches ($count/17)..."
                         handler.postDelayed(this, 500L)
@@ -851,6 +904,9 @@ class MainActivity : AppCompatActivity() {
     // 4. NEXT
     // ========================================================
     private fun runStep4_LogoutAndNext() {
+        if (isLoggingOut) return
+        isLoggingOut = true
+
         tvStatus.text = "Step 4: Clearing session..."
         isStepActive = false
         loginWatchdog?.let { handler.removeCallbacks(it) }
@@ -864,7 +920,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (numbersList.isNotEmpty()) {
                     if (currentIndex < numbersList.size - 1) {
-                        currentIndex++
+                        currentIndex++ // Strictly one advance
                     } else {
                         currentIndex = 0
                         saveData()
@@ -879,7 +935,10 @@ class MainActivity : AppCompatActivity() {
                 webView.loadUrl("https://winpesa.ng")
 
                 if (isAutoRunning) {
-                    safeDelay(1600L) { runStep1_Login() }
+                    safeDelay(1600L) { 
+                        loginRetryCount = 0
+                        runStep1_Login() 
+                    }
                 }
             }
         }
